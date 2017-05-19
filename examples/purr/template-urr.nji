@@ -1,0 +1,38 @@
+moder   / extract and convert neutron evaluated data to binary format
+20 -21  / input ENDF file, output ENDF tape
+reconr  / reconstruct cross section values from known resonance parameters
+-21 -22 / input ENDF tape, output PENDF tape
+'$NUCLIDE $EVALUATION PENDF' / comment
+$MAT 0             / MAT#, # of comment cards to follow (in reconr)
+0.001 0.0 0.001    / target relative error, temp (K), max relative error
+0                  / end
+moder              / convert back to ascii
+-22 32             / input PENDF tape, output PENDF tape
+moder              / convert back to binary
+32 -22             / input PENDF tape, output PENDF tape
+broadr             / Doppler broaden point-wise cross section values
+-21 -22 -23        / input ENDF tape, input PENDF tape, output PENDF tape
+$MAT 1 0 0 0.0     / MAT#, # of temps, restart run?, bootstrap run?, start temp
+0.001              / target rel error, (-)max broadening E, max rel error
+$TEMPERATURE       / final temperature(s) [K]
+0                  / end
+moder              / convert back to ascii
+-23 34             / input PENDF tape, output PENDF tape
+purr               / Probability tables for the URR
+20 34 35           / input ENDF tape, input PENDF tape, output PENDF tape
+$MAT 1 1 16 64 1  / MAT#, #temps, #dil xs, #bands, #ladders, verbosity, #E pts
+$TEMPERATURE       / temperature values
+10000000.0         / dilution xs values
+0                  / end
+acer               / convert to ACE format
+20 35 0 36 0       / tapes: ENDFin, PENDFin, photon dataIN, ACEout, MCNP dirOUT
+1 1 1 $ACE_EXT     / see man, verbos, ACE outp type, extension, extra nuclides
+'$NUCLIDE $EVALUATION, $DATE, $NJOY_VERS, $AUTHOR' / comment
+$MAT $TEMPERATURE  / MAT#, temperature
+1 0                / new secondary distribution format?, detailed photon data?
+/ need this comment line
+acer               / run again to check output ACE file for errors
+20 36 0 37 0       / tapes: ENDFin, PENDFin, photon dataIN, ACEout, MCNP dirOUT
+7 1 1 $ACE_EXT     / see man, verbos, ACE outp type, extension, extra nuclides
+'$NUCLIDE $EVALUATION, $DATE, $NJOY_VERS, $AUTHOR' / comment
+stop
