@@ -1445,6 +1445,8 @@ contains
    ! internals
    integer::ne,ie,nmu,imu,nb,nw
 
+   ! negative laws, law 0, 3 and 4 have no law dependent structure so no
+   ! need to skip over it
    if (law.eq.6) then
       call contio(nin,nout,nscr,a(1),nb,nw)
    else if (law.eq.1.or.law.eq.2.or.law.eq.5) then
@@ -1598,6 +1600,12 @@ contains
    ! internals
    real(kr)::a,b,t
    real(kr),parameter::zero=0
+
+   !--make sure x2 .ne. x1
+   if (x2.eq.x1) then
+      y=y1
+      return
+   endif
 
    !--y is constant
    if (i.eq.1.or.y2.eq.y1.or.x.eq.x1) then

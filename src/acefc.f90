@@ -51,6 +51,9 @@ module acefc
    integer::mcoars,npt
 
    ! File 6 parameters
+   integer::ipnu,jpnu,nkk
+   real(kr),allocatable,dimension(:)::e1456,p1456nu
+   real(kr),allocatable,dimension(:)::p16456nu,p6456nu
    integer::nsix,n16
 
    ! particle production information (from common/ace8/)
@@ -83,19 +86,10 @@ module acefc
    integer,parameter::nxss=20000000
    real(kr)::xss(nxss)
 
-   ! set ismooth to 1 to cause extension of mf6 cm distributions
-   ! to lower energies using a sqrt(E) shape, to extend delayed
-   ! neutron distributions as sqrt(E) to lower energies, and to
-   ! add additional points above 10 Mev to some fission spectra
-   ! assuming an exponential shape.  otherwise, use ismooth=0.
-   ! NOTE:  ismooth=0 is the default value in njoy99.
-   integer,parameter::ismooth=1
-!   integer,parameter::ismooth=0
-
 contains
 
    subroutine acetop(nendf,npend,ngend,nace,ndir,iprint,itype,mcnpx,&
-     suff,hk,izn,awn,matd,tempd,newfor,iopp,thin)
+     suff,hk,izn,awn,matd,tempd,newfor,iopp,ismooth,thin)
    !--------------------------------------------------------------------
    ! Prepare an ACE fast continuous file.
    !--------------------------------------------------------------------
@@ -103,7 +97,7 @@ contains
    use util   ! provides openz,mess,closz
    use endf   ! provides endf routines and variables
    ! externals
-   integer::nendf,npend,ngend,nace,ndir,iprint,itype,matd,newfor,iopp
+   integer::nendf,npend,ngend,nace,ndir,iprint,itype,matd,newfor,iopp,ismooth
    integer::mcnpx
    real(kr)::suff
    character(70)::hk
@@ -181,7 +175,7 @@ contains
    call atend(mscr,0)
 
    !--load ace data into memory.
-   call acelod(mscr,nedis,suff,matd,tempd,newfor,mcnpx)
+   call acelod(mscr,nedis,suff,matd,tempd,newfor,mcnpx,ismooth)
 
    !--print ace file.
    if (iprint.gt.0) call aceprt(hk)
@@ -778,6 +772,7 @@ contains
    ! internals
    integer::nb,nw,i,nonlin,int,ia,ir,in,nbt,ibase,id,ne,idone,nen
    integer::nwm,nwscr
+   integer::j
    real(kr)::dy,xm,yy,ym,test
    real(kr),dimension(:),allocatable::scr,scr2
    real(kr),dimension(:),allocatable::buf
@@ -841,9 +836,36 @@ contains
    if (nonlin.eq.0) then
       call tab1io(0,nout,0,scr,nb,nw)
       ncs(nxc)=ncs(nxc)+1+nint((scr(5)+2)/3)+nint((scr(6)+2)/3)
+      if (mti.eq.456) then
+         ipnu=nint(scr(6))
+         if (allocated(e1456)) then
+            deallocate(e1456)
+            deallocate(p1456nu)
+         endif
+         allocate(e1456(ipnu))
+         allocate(p1456nu(ipnu))
+         ibase=7+2*nr
+         i=0
+         do j=ibase,nw,2
+            i=i+1
+            e1456(i)=scr(j)
+            p1456nu(i)=scr(j+1)
+         enddo
+      endif
       do while (nb.ne.0)
          call moreio(nin,nout,0,scr,nb,nw)
+         if (mti.eq.456) then
+            do j=1,nw,2
+               i=i+1
+               e1456(i)=scr(j)
+               p1456nu(i)=scr(j+1)
+            enddo
+         endif
       enddo
+      if (allocated(e1456)) then
+         deallocate(e1456)
+         deallocate(p1456nu)
+      endif
       call contio(nin,nout,0,scr,nb,nw)
       return
    endif
@@ -937,12 +959,25 @@ contains
    !--write new tab1-formatted mt.
    scr2(6)=ne
    scr2(7)=ne
+   if (mti.eq.456) then
+      ipnu=ne
+      if (allocated(e1456)) then
+         deallocate(e1456)
+         deallocate(p1456nu)
+      endif
+      allocate(e1456(ipnu))
+      allocate(p1456nu(ipnu))
+   endif
    do i=1,ne
       call finda(i,b,2,itape,buf,nbuf)
       id=id+1
       scr2(id)=b(1)
       id=id+1
       scr2(id)=b(2)
+      if (mti.eq.456) then
+         e1456(i)=b(1)
+         p1456nu(i)=b(2)
+      endif
       if (id.ge.npage.or.i.eq.ne) then
          if (ibase.ne.0) then
             call tab1io(0,nout,0,scr2,nb,id)
@@ -954,6 +989,10 @@ contains
          endif
       endif
    enddo
+   if (allocated(e1456)) then
+      deallocate(e1456)
+      deallocate(p1456nu)
+   endif
    call contio(nin,nout,0,scr,nb,nw)
    call closz(-itape)
 
@@ -1860,9 +1899,11 @@ contains
    integer::nep,ll,iep,nb,nw,iend,nwmax,nin0,lang,i,np
    integer::intmu,loc,intep,igrd,ngrd,m,n,ians,ipp,irr,idis
    integer::nt1w,loct1,loct2,ne2,nn,nr,nf,locmx,npe
+   integer::lis,jp,jpn,jpp,jpnut
    character(60)::string
    real(kr)::dzap,test,zap,e1,e2,f,ei,ep,epn,ss,ff,dmu
    real(kr)::b(50)
+   real(kr)::y,enext
    real(kr),dimension(:),allocatable::tab1
    real(kr),dimension(:),allocatable::scr
    integer,parameter::nwmaxn=65000
@@ -1874,6 +1915,11 @@ contains
    integer::no7=1
 
    !--initialize and compute coefficients.
+   jp=0
+   jpn=0
+   jpp=0
+   jpnu=0
+   nkk=0
    nt1w=4200
    allocate(tab1(nt1w))
    nsix=19
@@ -2184,6 +2230,9 @@ contains
 
          !--work on file 6
          ltt=0
+         jp=l1h
+         jpn=mod(jp,10)
+         jpp=(jp-jpn)/10
          nk=n1h
          ik=0
          scr(5)=nk
@@ -2199,12 +2248,22 @@ contains
             call tab1io(nin,0,0,scr,nb,nw)
             ncs(nxc)=ncs(nxc)+1+nint((scr(5)+2)/3)&
               +nint((scr(6)+2)/3)
+            lis=l1h
             lf=l2h
+            if (nint(scr(1)).eq.1.and.&
+                (jpn.eq.2 .or. (jpn.eq.1.and.ik.ge.2))) then
+               nkk=nkk+1
+               jpnut=6+2*(n1h+n2h)
+               if (jpnut.gt.jpnu) jpnu=jpnut
+            endif
             if (newfor.eq.1.and.lf.eq.7.and.no7.eq.1) scr(4)=1
             call tab1io(0,nout,0,scr,nb,nw)
             do while (nb.ne.0)
                call moreio(nin,nout,0,scr,nb,nw)
             enddo
+
+            ! negative laws, law 0, 3 and 4 have no law dependent
+            ! structure so no need to do anything
             if (lf.eq.6) then
                call contio(nin,nout,0,scr,nb,nw)
             else if (lf.eq.7.and.newfor.eq.1.and.no7.eq.1) then
@@ -3728,6 +3787,7 @@ contains
    integer::nin,npend,nout,nscr,nedis,nethr,matd
    ! internals
    integer::kt,mf12,nw,i,l2flg,j,nk,mfd,mtd,ik,np,nwt,jtot
+   integer::jp,jpn,jpp
    integer::nb,l,iedis,nemax,imu,nmu,ie,ne,nbt
    integer::imax,lmax,imaxsq,nwscr,kscr,idis,kprnt
    integer::lg,mt0,mt0old,n,jm1,kk,k,idone,ii,kp1,ja,jb
@@ -4234,7 +4294,12 @@ contains
       mfh=6
       do while (mfh.ne.0)
          call contio(nin,0,0,scr,nb,nw)
-         if (mfh.ne.0) then
+         jp=l1h
+         jpn=mod(jp,10)
+         jpp=jp-10*jpn
+         if (mfh.ne.0 .and. mth.eq.18 .and. jpp.ne.0) then
+            call tosend(nin,0,0,scr) !skip past mf6/mt18 (for now)
+         else if (mfh.ne.0) then
             igm=0
             nk=n1h
             ik=0
@@ -4243,7 +4308,7 @@ contains
                zap=c1h
                law=l2h
                egamma=0
-               if (zap.eq.zero) then
+               if (zap.eq.zero .and. law.ne.zero) then
                   if (law.eq.2) then
                      call mess('convr',&
                        'discrete anisotropic photon',&
@@ -4263,7 +4328,7 @@ contains
                endif
                do while (nb.ne.0)
                   call moreio(nin,0,0,scr(7),nb,nw)
-                  if (zap.eq.zero) then
+                  if (zap.eq.zero .and. law.ne.zero) then
                      mfh=16
                      call moreio(0,nout,0,scr(7),nbt,nw)
                   endif
@@ -4720,7 +4785,7 @@ contains
    return
    end subroutine gamout
 
-   subroutine acelod(nin,nedis,suff,matd,tempd,newfor,mcnpx)
+   subroutine acelod(nin,nedis,suff,matd,tempd,newfor,mcnpx,ismooth)
    !-------------------------------------------------------------------
    ! Load data in ace format from the input file.
    !-------------------------------------------------------------------
@@ -4729,7 +4794,7 @@ contains
    use util ! repoz,dater,error,skiprz,sigfig
    use endf ! provides endf routines and variables
    ! externals
-   integer::nin,nedis,matd,newfor,mcnpx
+   integer::nin,nedis,matd,newfor,mcnpx,ismooth
    real(kr)::suff,tempd
    ! internals
    integer::nwscr,nnu,nnup,kfis,mtnr,mtntr,i,nnud,nnf
@@ -4740,6 +4805,7 @@ contains
    integer::jscr,iso,ne,law,lidp,last,il,ja,jb,nure,nurb
    integer::mtxx,mtaa,jj,ll,ib,iza,mf,mt,lend,lendp,inow
    integer::lff,lxx,nn,mm,iint,loc,ix
+   integer::mt418,mt518
    real(kr)::urlo,urhi,e,enext,s,test,awp,spi,q,x,teste,zaid
    real(kr)::xxmin,xxmax,sumup,ex,fx,val
    character(8)::hdt
@@ -5582,6 +5648,7 @@ contains
    and=land+1+nr
    next=and
    do ij=1,nr+1
+      mt418=0
       ir=ij-1
       if (ij.eq.1) then
          mt=2
@@ -5591,7 +5658,20 @@ contains
       mf=0
       iso=0
       do k=1,nxc
-         if (mts(k).eq.mt.and.(mfs(k).eq.4.or.mfs(k).eq.6)) mf=mfs(k)
+         if (mts(k).eq.mt) then
+            if (mt.ne.18.and.(mfs(k).eq.4.or.mfs(k).eq.6)) then
+               mf=mfs(k)
+            else
+               if (mt.eq.18.and.mfs(k).eq.4.and.mt418.eq.0) then
+                  mt418=1
+                  mf=mfs(k)
+                  exit
+               else if (mt.eq.18.and.mfs(k).eq.6) then
+                  mf=mfs(k)
+                  exit
+               endif
+            endif
+         endif
       enddo
       if (mf.eq.4.or.mf.eq.6) then
          call findf(matd,mf,mt,nin)
@@ -5695,15 +5775,29 @@ contains
    dlw=next
    if (nr.ne.0) then
       do i=1,nr
+         mt518=0
          mt=nint(xss(mtr+i-1))
          q=xss(lqr+i-1)
          do k=1,nxc
-            if (mts(k).eq.mt) mf=mfs(k)
+            if (mts(k).eq.mt) then
+               if (mt.eq.18.and.mfs(k).eq.5.and.mt518.eq.0) then
+                  mt518=1
+                  mf=mfs(k)
+                  exit
+               else if (mt.eq.18.and.mfs(k).eq.6) then
+                  mf=mfs(k)
+                  exit
+               else
+                  mf=mfs(k)
+               endif
+            endif
          enddo
          if (mf.eq.5) then
-            call acelf5(next,i,matd,mt,q,nin)
+            call acelf5(next,i,matd,mt,q,nin,ismooth)
          else if (mf.eq.6) then
-            call acelf6(next,i,matd,mt,q,iza,izai,nin,newfor)
+            if (mt518.eq.0) then
+               call acelf6(next,i,matd,mt,q,iza,izai,nin,newfor,ismooth)
+            endif
          else
             if ((next+11).gt.nxss) call error('acelod',&
               'insufficient space for energy distributions',' ')
@@ -5744,7 +5838,7 @@ contains
       mtxx=-1
       if (iinel.ne.0) mtxx=iinel
       mtaa=-1
-      if (iabso.ne.0) mtxx=iabso
+      if (iabso.ne.0) mtaa=iabso
       xss(next+1)=nurb
       xss(next+2)=2
       xss(next+3)=mtxx
@@ -6421,7 +6515,7 @@ contains
    return
    end subroutine acecpe
 
-   subroutine acelf5(next,i,matd,mt,q,nin)
+   subroutine acelf5(next,i,matd,mt,q,nin,ismooth)
    !-------------------------------------------------------------------
    ! Process this reaction from File 5.
    !-------------------------------------------------------------------
@@ -6429,7 +6523,7 @@ contains
    use util ! provides sigfig
    use endf ! provides endf routines and variables
    ! externals
-   integer::next,i,matd,mt,nin
+   integer::next,i,matd,mt,nin,ismooth
    real(kr)::q
    ! internals
    integer::nb,nw,nk,k,lf,m,n,jnt,ja,jb,j,l,nextn,nexd,ne,jscr,ki
@@ -6828,7 +6922,7 @@ contains
    return
    end subroutine acelf5
 
-   subroutine acelf6(next,i,matd,mt,q,iza,izai,nin,newfor)
+   subroutine acelf6(next,i,matd,mt,q,iza,izai,nin,newfor,ismooth)
    !-------------------------------------------------------------------
    ! Prepare generalized yields and energy-angle distributions for
    ! this reaction from File 6.
@@ -6838,7 +6932,7 @@ contains
    use endf ! provides endf routines and variables
    use acecm ! provides bachaa,ptleg2,pttab2
    ! externals
-   integer::next,i,matd,mt,iza,izai,nin,newfor
+   integer::next,i,matd,mt,iza,izai,nin,newfor,ismooth
    real(kr)::q
    ! internals
    integer::nb,nw,lct,nk,jscr,ivar,ik,idone,ikk,law,m,n,jnt
@@ -6846,6 +6940,7 @@ contains
    integer::npsx,nn,lang,lep,nextn,nexd,ne,nd,na,ncyc,nexcd
    integer::ki,iso,ik3,ii1,ia,ll,intmu,nmu,imu,mus,npep,intep
    integer::last,nx,ix
+   integer::jp,jpn,jpp
    integer::nxyz1,nxyz2,nxyz3,nxyz4
    real(kr)::test,eemx,yield,xnext,xx,yy,y,xn,eyl,gyl,en
    real(kr)::apsx,step1,step2,xl,pl,yn,pn,rn,sum,ee
@@ -6874,6 +6969,9 @@ contains
    !--generalized yield from file 6
    call findf(matd,6,mt,nin)
    call contio(nin,0,0,scr,nb,nw)
+   jp=nint(scr(3))
+   jpn=mod(jp,10)
+   jpp=(jp-jpn)/10
    lct=nint(scr(4))
    if (lct.gt.2) lct=2
    nk=nint(scr(5))
@@ -6889,7 +6987,8 @@ contains
       test=1
       test=test/1000
       law=nint(scr(jscr+3))
-      if (zap.eq.zero.or.zap-izai.gt.test) then
+      if (zap.eq.zero.or.zap-izai.gt.test.or.&
+          jpn.eq.2.or.(jpn.eq.1.and.ikk.gt.1)) then
          idone=1
       else
 
@@ -7005,6 +7104,9 @@ contains
    call findf(matd,6,mt,nin)
    call contio(nin,0,0,scr,nb,nw)
    xss(ldlw+i-1)=next-dlw+1
+   jp=nint(scr(3))
+   jpn=mod(jp,10)
+   jpp=(jp-jpn)/10
    ik=0
    ikk=0
   110 continue
@@ -7017,6 +7119,7 @@ contains
    test=test/1000
    law=nint(scr(4))
    if (zap.eq.zero.or.zap-izai.gt.test) go to 130
+   if (jpn.eq.2.or.(jpn.eq.1.and.ikk.gt.1)) go to 130
    if (abs(zap-izai).lt.test) go to 120
    ! skip this subsection
    do while (nb.ne.0)
@@ -7247,8 +7350,8 @@ contains
                   n=n-1
                enddo
                write(nsyso,'('' extending histograms as sqrt(E) below'',&
-                 &1p,e10.2,'' MeV for E='',e10.2,'' MeV'')')&
-                 scr(7+ncyc)/emev,ee
+                 &1p,e10.2,'' MeV for E='',e10.2,'' MeV mt='',i3)')&
+                 scr(7+ncyc)/emev,ee,mt
                do while (scr(7+ncyc).gt.ex)
                   do ix=nx,1,-1
                      scr(6+ncyc+ix)=scr(6+ix)
@@ -7276,8 +7379,8 @@ contains
                ! insert those zero energy data
                if (scr(7).gt.ex) then
                   write(nsyso,'('' extending lin-lin as sqrt(E) '',&
-                   &''below'',1p,e10.2,'' eV for E='',e10.2,'' eV'')&
-                   &')scr(7)/emev,ee
+                   &''below'',1p,e10.2,'' MeV for E='',e10.2,'' MeV mt='')&
+                   &')scr(7)/emev,ee,mt
                   do ix=nx,1,-1
                      scr(6+ncyc+ix)=scr(6+ix)
                   enddo
@@ -7385,7 +7488,11 @@ contains
                !--distribution given in kalbach format
                if (lang.eq.2) then
                   xss(ki+3*n+nexd)=scr(9+ncyc*(ki-1))
-                  aa=bachaa(1,1,iza,ee,ep)
+                  if (na.eq.2) then
+                     aa=scr(10+ncyc*(ki-1))
+                  else
+                     aa=bachaa(1,1,iza,ee,ep)
+                  endif
                   xss(ki+4*n+nexd)=sigfig(aa,7,0)
 
                !--convert legendre distribution to kalbach form
@@ -7892,6 +7999,7 @@ contains
    integer::ie,je,jn,jfirst,jlast,nlast,law,lff,li,ni,ii,mmm
    integer::ne,lc,imu,nexl,nc,ic,nexd,k,lep,nd,na,ncyc,ki
    integer::nyp,mtl,loct,nd0,mtdold
+   integer::jp,jpn,jpp
    real(kr)::awr,eg,egamma,ei,en,ep,epu,ef,el,e1,teste,renorm,r
    real(kr),dimension(:),allocatable::scr
    real(kr),dimension(:),allocatable::dise
@@ -7926,12 +8034,16 @@ contains
       mtd=nint(gmt(kgmt)-mfd*1000)
       call findf(matd,mfd,mtd,nin)
       call contio(nin,0,0,scr,nb,nw)
+      jp=nint(scr(3))
+      jpn=mod(jp,10)
+      jpp=(jp-jpn)/10
       nk=n1h
       mto=mtd*10000
       ik=0
       ifini=0
       do while (ifini.eq.0)
          call tab1io(nin,0,0,scr,nb,nw)
+         law=l2h
          jscr=1
          idone=0
          do while (idone.eq.0)
@@ -10003,7 +10115,11 @@ contains
                                  rkal=scr(lld+8+ncyc*(ig-1))
                                  xss(next+1+ig+3*ng)=sigfig(rkal,7,0)
                                  ep=xss(next+1+ig)
-                                 akal=bachaa(izai,izap,iza,ee,ep)
+                                 if (na.eq.2) then
+                                    akal=scr(lld+9+ncyc*(ig-1))
+                                 else
+                                    akal=bachaa(izai,izap,iza,ee,ep)
+                                 endif
                                  xss(next+1+ig+4*ng)=sigfig(akal,7,0)
                               ! legendre or tabulated distribution
                               else if (lawnow.eq.61) then
@@ -17505,7 +17621,7 @@ contains
                endif
             enddo
             if (zmax1.gt.zero) then
-               if (zmax2/zmax1.lt.1.e-4_kr) then
+               if ((zmax2/zmax1.lt.1.e-4_kr).and.(zmax2.ne.zero)) then
                   zmax=zmax2
                else
                   zmax=zmax1
@@ -17631,7 +17747,7 @@ contains
                endif
             enddo
             if (zmax1.gt.zero) then
-               if (zmax2/zmax1.lt.1.e-4_kr) then
+               if ((zmax2/zmax1.lt.1.e-4_kr).and.(zmax2.ne.zero)) then
                   zmax=zmax2
                else
                   zmax=zmax1
@@ -17775,7 +17891,7 @@ contains
                enddo
             enddo
             if (zmax1.gt.zero) then
-               if (zmax2/zmax1.lt.1.e-4_kr) then
+               if ((zmax2/zmax1.lt.1.e-4_kr).and.(zmax2.ne.zero)) then
                   zmax=zmax2
                else
                   zmax=zmax1
